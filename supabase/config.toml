@@ -1,0 +1,4 @@
+project_id = "vzhthziubifvkwdnqitk"
+
+[functions.analyze-accident]
+verify_jwt = false
