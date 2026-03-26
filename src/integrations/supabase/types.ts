@@ -47,6 +47,73 @@ export type Database = {
         }
         Relationships: []
       }
+      esp32_location: {
+        Row: {
+          id: string
+          lat: number
+          lon: number
+          mission_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          lat: number
+          lon: number
+          mission_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          lat?: number
+          lon?: number
+          mission_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "esp32_location_mission_id_fkey"
+            columns: ["mission_id"]
+            isOneToOne: false
+            referencedRelation: "missions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      missions: {
+        Row: {
+          accident_id: string | null
+          created_at: string | null
+          id: string
+          status: string | null
+          target_lat: number
+          target_lon: number
+        }
+        Insert: {
+          accident_id?: string | null
+          created_at?: string | null
+          id?: string
+          status?: string | null
+          target_lat: number
+          target_lon: number
+        }
+        Update: {
+          accident_id?: string | null
+          created_at?: string | null
+          id?: string
+          status?: string | null
+          target_lat?: number
+          target_lon?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "missions_accident_id_fkey"
+            columns: ["accident_id"]
+            isOneToOne: false
+            referencedRelation: "accident_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

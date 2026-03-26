@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { LogOut, MapPin, Brain, Calendar, Loader2, AlertTriangle, ChevronRight } from "lucide-react";
+import { LogOut, MapPin, Calendar, Loader2, AlertTriangle, ChevronRight, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ReportDetailDialog from "@/components/ReportDetailDialog";
+import MissionPanel from "@/components/MissionPanel";
+import MissionHistory from "@/components/MissionHistory";
 
 interface Report {
   id: string;
@@ -21,7 +23,9 @@ const AdminDashboard = () => {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
+  const [dispatchedIds, setDispatchedIds] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
+  const dispatchedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     checkAuth();
@@ -30,9 +34,7 @@ const AdminDashboard = () => {
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      navigate("/admin/login");
-    }
+    if (!session) navigate("/admin/login");
   };
 
   const fetchReports = async () => {
@@ -44,9 +46,49 @@ const AdminDashboard = () => {
     if (error) {
       toast.error("Failed to load reports");
     } else {
-      setReports(data || []);
+      const reportsList = data || [];
+      setReports(reportsList);
+
+      // Check which reports already have missions
+      const ids = reportsList.map((r) => r.id);
+      if (ids.length > 0) {
+        const { data: existingMissions } = await supabase
+          .from("missions")
+          .select("accident_id")
+          .in("accident_id", ids);
+        const existing = new Set((existingMissions || []).map((m: any) => m.accident_id));
+        dispatchedRef.current = existing;
+        setDispatchedIds(new Set(existing));
+
+        // Auto-dispatch for accident reports that don't have missions yet
+        for (const report of reportsList) {
+          if (
+            report.prediction_label === "Accident Detected" &&
+            !existing.has(report.id)
+          ) {
+            autoDispatch(report);
+          }
+        }
+      }
     }
     setLoading(false);
+  };
+
+  const autoDispatch = async (report: Report) => {
+    if (dispatchedRef.current.has(report.id)) return;
+    dispatchedRef.current.add(report.id);
+
+    const { error } = await supabase.from("missions").insert({
+      accident_id: report.id,
+      target_lat: report.latitude,
+      target_lon: report.longitude,
+      status: "pending",
+    });
+
+    if (!error) {
+      setDispatchedIds((prev) => new Set(prev).add(report.id));
+      toast.success("Mission auto-dispatched", { description: `Report ${report.id.slice(0, 8)}...` });
+    }
   };
 
   const handleLogout = async () => {
@@ -74,9 +116,7 @@ const AdminDashboard = () => {
             <h2 className="text-2xl font-bold">Accident Reports</h2>
             <p className="text-muted-foreground text-sm">{reports.length} total reports</p>
           </div>
-          <Button variant="outline" onClick={fetchReports}>
-            Refresh
-          </Button>
+          <Button variant="outline" onClick={fetchReports}>Refresh</Button>
         </div>
 
         {loading ? (
@@ -91,47 +131,61 @@ const AdminDashboard = () => {
         ) : (
           <div className="grid gap-4">
             {reports.map((report) => (
-              <button
-                key={report.id}
-                onClick={() => setSelectedReport(report)}
-                className="glass-card-hover rounded-xl p-4 flex items-center gap-4 text-left w-full"
-              >
-                <img
-                  src={report.image_url}
-                  alt="Accident"
-                  className="w-20 h-20 rounded-lg object-cover flex-shrink-0"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      report.prediction_label === "Accident Detected"
-                        ? "bg-destructive/20 text-destructive"
-                        : "bg-success/20 text-success"
-                    }`}>
-                      {report.prediction_label}
-                    </span>
-                    {report.confidence_score && (
-                      <span className="text-xs text-muted-foreground">
-                        {(report.confidence_score * 100).toFixed(1)}%
+              <div key={report.id} className="glass-card rounded-xl p-4">
+                <button
+                  onClick={() => setSelectedReport(report)}
+                  className="flex items-center gap-4 text-left w-full"
+                >
+                  <img
+                    src={report.image_url}
+                    alt="Accident"
+                    className="w-20 h-20 rounded-lg object-cover flex-shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        report.prediction_label === "Accident Detected"
+                          ? "bg-destructive/20 text-destructive"
+                          : "bg-green-500/20 text-green-400"
+                      }`}>
+                        {report.prediction_label}
                       </span>
-                    )}
+                      {report.confidence_score && (
+                        <span className="text-xs text-muted-foreground">
+                          {(report.confidence_score * 100).toFixed(1)}%
+                        </span>
+                      )}
+                      {dispatchedIds.has(report.id) && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-500/20 text-green-400 flex items-center gap-1">
+                          <Zap className="w-3 h-3" /> Mission Auto-Dispatched
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <MapPin className="w-3 h-3" />
+                        {report.latitude.toFixed(4)}, {report.longitude.toFixed(4)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
+                        {new Date(report.reported_at).toLocaleString()}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <MapPin className="w-3 h-3" />
-                      {report.latitude.toFixed(4)}, {report.longitude.toFixed(4)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
-                      {new Date(report.reported_at).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-              </button>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                </button>
+
+                {/* Mission Panel - shown for dispatched accidents */}
+                {dispatchedIds.has(report.id) && (
+                  <MissionPanel accidentId={report.id} />
+                )}
+              </div>
             ))}
           </div>
         )}
+
+        {/* Mission History */}
+        <MissionHistory />
       </main>
 
       <ReportDetailDialog
